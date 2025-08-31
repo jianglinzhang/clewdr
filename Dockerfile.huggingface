@@ -4,8 +4,8 @@ FROM ghcr.io/xerxes-2/clewdr:latest
 # Set environment variables for Hugging Face deployment
 # Use PORT env var from Hugging Face or default to 7860
 ENV CLEWDR_IP=0.0.0.0
-ENV CLEWDR_PORT=${PORT:-7860}
-ENV CLEWDR_NO_FS=TRUE
+ENV CLEWDR_PORT=${PORT:-8484}
 
 # Expose the port that Hugging Face expects
-EXPOSE ${PORT:-7860}
+EXPOSE ${PORT:-8484}
+USER 10014
