@@ -12,6 +12,8 @@ pub mod config;
 pub mod error;
 pub mod gemini_state;
 pub mod middleware;
+pub mod persistence;
+pub mod providers;
 pub mod router;
 pub mod services;
 pub mod types;
@@ -21,6 +23,22 @@ pub const IS_DEBUG: bool = cfg!(debug_assertions);
 pub static IS_DEV: LazyLock<bool> = LazyLock::new(|| std::env::var("CARGO_MANIFEST_DIR").is_ok());
 
 pub static VERSION_INFO: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "v{} by {}\n| profile: {}\n| mode: {}\n| no_fs: {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_PKG_AUTHORS"),
+        if IS_DEBUG { "debug" } else { "release" },
+        if *IS_DEV { "dev" } else { "prod" },
+        if CLEWDR_CONFIG.load().no_fs {
+            "true"
+        } else {
+            "false"
+        }
+    )
+});
+
+/// Returns version info with colors for terminal output
+pub fn version_info_colored() -> String {
     format!(
         "v{} by {}\n| profile: {}\n| mode: {}\n| no_fs: {}",
         env!("CARGO_PKG_VERSION"),
@@ -41,7 +59,7 @@ pub static VERSION_INFO: LazyLock<String> = LazyLock::new(|| {
             "false".green()
         }
     )
-});
+}
 
 pub const FIG: &str = r#"
     //   ) )                                    //   ) ) 

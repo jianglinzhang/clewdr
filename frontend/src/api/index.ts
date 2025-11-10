@@ -51,6 +51,17 @@ export async function postCookie(cookie: string) {
     throw new Error("Authentication failed. Please set a valid auth token.");
   } else if (response.status === 500) {
     throw new Error("Server error.");
+  } else if (response.status === 503) {
+    let message = "Database storage is unavailable";
+    try {
+      const data = await response.json();
+      if (typeof data?.error === "string") {
+        message = data.error;
+      }
+    } catch (error) {
+      console.warn("Failed to parse error response for cookie submission", error);
+    }
+    throw new Error(message);
   }
 
   if (!response.ok) {
@@ -62,16 +73,19 @@ export async function postCookie(cookie: string) {
 
 /**
  * Gets cookie status information from the server.
- * @returns The cookie status data
+ * @param forceRefresh If true, bypasses cache and fetches fresh data
+ * @returns The cookie status data with cache metadata
  *
  * Possible Status Codes:
  * - 200: Success with cookie status data
  * - 401: Invalid bearer token
  * - 500: Server error
  */
-export async function getCookieStatus() {
+export async function getCookieStatus(forceRefresh = false) {
   const token = localStorage.getItem("authToken") || "";
-  const response = await fetch("/api/cookies", {
+  const url = forceRefresh ? "/api/cookies?refresh=true" : "/api/cookies";
+
+  const response = await fetch(url, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -83,7 +97,17 @@ export async function getCookieStatus() {
     throw new Error(`Error ${response.status}: ${response.statusText}`);
   }
 
-  return await response.json();
+  const data = await response.json();
+  const cacheStatus = response.headers.get("X-Cache-Status");
+  const cacheTimestamp = response.headers.get("X-Cache-Timestamp");
+
+  return {
+    data,
+    cacheInfo: {
+      isFromCache: cacheStatus === "HIT",
+      timestamp: cacheTimestamp ? parseInt(cacheTimestamp, 10) : null,
+    },
+  };
 }
 
 /**
@@ -134,30 +158,33 @@ export async function getConfig() {
  * Saves config data to the server
  * @param configData The config data to save
  */
-export async function saveConfig(configData: any) {
-  const token = localStorage.getItem("authToken") || "";
-  // if configData.vertex.credential is no empty string, parse it
-  if (configData?.vertex?.credential !== "") {
-    try {
-      configData.vertex.credential = JSON.parse(configData.vertex.credential);
-    } catch {
-      configData.vertex.credential = null;
-    }
-  } else {
-    configData.vertex.credential = null;
-  }
+import type { ConfigData } from "../types/config.types";
 
+export async function saveConfig(configData: ConfigData) {
+  const token = localStorage.getItem("authToken") || "";
+  // The config page no longer manages Vertex credentials.
+  // Exclude `vertex` from the payload to avoid accidental type mismatches
+  // with the backend's ServiceAccountKey structure and to preserve
+  // credentials managed in the Gemini section.
+  const { vertex: _omitVertex, ...payload } = (configData as unknown) as Record<string, unknown>;
   const response = await fetch("/api/config", {
-    method: "PUT",
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(configData),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to save config: ${response.status}`);
+    // Try to include server error message when available for easier debugging
+    try {
+      const data = await response.json();
+      const serverMsg = typeof data?.error === "string" ? ` - ${data.error}` : "";
+      throw new Error(`Failed to save config: ${response.status}${serverMsg}`);
+    } catch (_) {
+      throw new Error(`Failed to save config: ${response.status}`);
+    }
   }
 
   return response;
@@ -226,4 +253,46 @@ export async function postMultipleCookies(cookies: string[]) {
   }
 
   return results;
+}
+
+// Storage: import/export between file and DB
+export async function storageImport() {
+  const token = localStorage.getItem("authToken") || "";
+  const response = await fetch("/api/storage/import", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Import failed: ${response.status}`);
+  }
+  return await response.json();
+}
+
+export async function storageExport() {
+  const token = localStorage.getItem("authToken") || "";
+  const response = await fetch("/api/storage/export", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Export failed: ${response.status}`);
+  }
+  return await response.json();
+}
+
+export async function storageStatus() {
+  const token = localStorage.getItem("authToken") || "";
+  const response = await fetch("/api/storage/status", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Status failed: ${response.status}`);
+  }
+  return await response.json();
 }

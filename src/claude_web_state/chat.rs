@@ -104,10 +104,13 @@ impl ClaudeWebState {
 
         // Create a new conversation
         let new_uuid = uuid::Uuid::new_v4().to_string();
-        let endpoint = format!(
-            "{}/api/organizations/{}/chat_conversations",
-            self.endpoint, org_uuid
-        );
+        let endpoint = self
+            .endpoint
+            .join(&format!(
+                "api/organizations/{}/chat_conversations",
+                org_uuid
+            ))
+            .expect("Url parse error");
         let body = json!({
             "uuid": new_uuid,
             "name": format!("ClewdR-{}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")),
@@ -125,6 +128,8 @@ impl ClaudeWebState {
         self.conv_uuid = Some(new_uuid.to_string());
         debug!("New conversation created: {}", new_uuid);
 
+        // preserve original params for possible post-call token accounting
+        self.last_params = Some(p.clone());
         let mut body = json!({});
         // enable thinking mode
         body["settings"]["paprika_mode"] = if p.thinking.is_some() && self.is_pro() {
@@ -133,10 +138,13 @@ impl ClaudeWebState {
             json!(null)
         };
 
-        let endpoint = format!(
-            "{}/api/organizations/{}/chat_conversations/{}",
-            self.endpoint, org_uuid, new_uuid
-        );
+        let endpoint = self
+            .endpoint
+            .join(&format!(
+                "api/organizations/{}/chat_conversations/{}",
+                org_uuid, new_uuid
+            ))
+            .expect("Url parse error");
         let _ = self
             .build_request(Method::PUT, endpoint)
             .json(&body)
@@ -157,10 +165,13 @@ impl ClaudeWebState {
 
         // send the request
         print_out_json(&body, "claude_web_clewdr_req.json");
-        let endpoint = format!(
-            "{}/api/organizations/{}/chat_conversations/{}/completion",
-            self.endpoint, org_uuid, new_uuid
-        );
+        let endpoint = self
+            .endpoint
+            .join(&format!(
+                "api/organizations/{}/chat_conversations/{}/completion",
+                org_uuid, new_uuid
+            ))
+            .expect("Url parse error");
 
         self.build_request(Method::POST, endpoint)
             .json(&body)

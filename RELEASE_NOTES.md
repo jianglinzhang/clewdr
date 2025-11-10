@@ -1,5 +1,5 @@
-# v0.11.13
+# v0.11.21
 
 ## Bug Fixes
 
-- Specify log directory for clewdr in Dockerfile
+- Fix double slash problem for Claude Web API endpoints

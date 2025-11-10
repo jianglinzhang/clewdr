@@ -20,6 +20,7 @@ export interface ConfigData {
   max_retries: number;
   preserve_chats: boolean;
   web_search: boolean;
+  enable_web_count_tokens: boolean;
 
   // Cookie settings
   skip_first_warning: boolean;
@@ -34,11 +35,45 @@ export interface ConfigData {
   custom_h: string | null;
   custom_a: string | null;
   custom_prompt: string;
+
+  // Persistence
+  persistence?: PersistenceConfig;
+}
+
+export interface StorageStatusDetails {
+  driver?: string;
+  latency_ms?: number;
+  sqlite_path?: string;
+  database_url?: string;
+}
+
+export interface StorageStatus {
+  enabled?: boolean;
+  mode?: PersistenceMode;
+  healthy?: boolean;
+  details?: StorageStatusDetails;
+  last_write_ts?: number;
+  total_writes?: number;
+  avg_write_ms?: number;
+  failure_ratio?: number;
+  retry_count?: number;
+  write_error_count?: number;
+  error?: string;
+  last_error?: string;
 }
 
 interface VertexConfig {
-  credential: string | null;
-  model_id: string | null;
+  credential?: string | null;
+  credentials?: { client_email: string }[];
+  [key: string]: unknown;
+}
+
+export type PersistenceMode = "file" | "sqlite" | "postgres";
+
+export interface PersistenceConfig {
+  mode: PersistenceMode;
+  database_url?: string | null;
+  sqlite_path?: string | null;
 }
 
 export interface ConfigState {

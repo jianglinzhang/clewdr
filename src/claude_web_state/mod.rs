@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use axum::http::HeaderValue;
 use snafu::ResultExt;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use url::Url;
 use wreq::{
     Client, ClientBuilder, IntoUrl, Method, Proxy, RequestBuilder,
@@ -15,7 +15,7 @@ use crate::{
     error::{ClewdrError, WreqSnafu},
     middleware::claude::ClaudeApiFormat,
     services::cookie_actor::CookieActorHandle,
-    types::claude::Usage,
+    types::claude::{CreateMessageParams, Usage},
 };
 
 pub mod bootstrap;
@@ -40,6 +40,8 @@ pub struct ClaudeWebState {
     pub client: Client,
     pub key: Option<(u64, usize)>,
     pub usage: Usage,
+    // keep the last request params for potential post-call token accounting
+    pub last_params: Option<CreateMessageParams>,
 }
 
 impl ClaudeWebState {
@@ -59,6 +61,7 @@ impl ClaudeWebState {
             client: SUPER_CLIENT.to_owned(),
             key: None,
             usage: Usage::default(),
+            last_params: None,
         }
     }
 
@@ -82,9 +85,21 @@ impl ClaudeWebState {
             .request(method, url)
             .header(ORIGIN, CLAUDE_ENDPOINT);
         if let Some(uuid) = self.conv_uuid.to_owned() {
-            req.header(REFERER, format!("{CLAUDE_ENDPOINT}/chat/{uuid}"))
+            req.header(
+                REFERER,
+                self.endpoint
+                    .join(&format!("chat/{uuid}"))
+                    .map(|u| u.into())
+                    .unwrap_or_else(|_| format!("{CLAUDE_ENDPOINT}chat/{uuid}")),
+            )
         } else {
-            req.header(REFERER, format!("{CLAUDE_ENDPOINT}/new"))
+            req.header(
+                REFERER,
+                self.endpoint
+                    .join("new")
+                    .map(|u| u.into())
+                    .unwrap_or_else(|_| format!("{CLAUDE_ENDPOINT}new")),
+            )
         }
     }
 
@@ -104,6 +119,9 @@ impl ClaudeWebState {
     pub async fn request_cookie(&mut self) -> Result<CookieStatus, ClewdrError> {
         let res = self.cookie_actor_handle.request(None).await?;
         self.cookie = Some(res.to_owned());
+        // Always pull latest proxy/endpoint before building the client
+        self.proxy = CLEWDR_CONFIG.load().wreq_proxy.to_owned();
+        self.endpoint = CLEWDR_CONFIG.load().endpoint();
         let mut client = ClientBuilder::new()
             .cookie_store(true)
             .emulation(Emulation::Chrome136);
@@ -114,9 +132,6 @@ impl ClaudeWebState {
             msg: "Failed to build client with new cookie",
         })?;
         self.cookie_header_value = HeaderValue::from_str(res.cookie.to_string().as_str())?;
-        // load newest config
-        self.proxy = CLEWDR_CONFIG.load().wreq_proxy.to_owned();
-        self.endpoint = CLEWDR_CONFIG.load().endpoint();
         Ok(res)
     }
 
@@ -134,6 +149,35 @@ impl ClaudeWebState {
         }
     }
 
+    fn classify_model(model: &str) -> crate::config::ModelFamily {
+        let m = model.to_ascii_lowercase();
+        if m.contains("opus") {
+            crate::config::ModelFamily::Opus
+        } else if m.contains("sonnet") {
+            crate::config::ModelFamily::Sonnet
+        } else {
+            crate::config::ModelFamily::Other
+        }
+    }
+
+    pub async fn persist_usage_totals(&mut self, input: u64, output: u64) {
+        if input == 0 && output == 0 {
+            return;
+        }
+        if let Some(cookie) = self.cookie.as_mut() {
+            let family = self
+                .last_params
+                .as_ref()
+                .map(|p| Self::classify_model(&p.model))
+                .unwrap_or(crate::config::ModelFamily::Other);
+            cookie.add_and_bucket_usage(input, output, family);
+            let cloned = cookie.clone();
+            if let Err(err) = self.cookie_actor_handle.return_cookie(cloned, None).await {
+                warn!("Failed to persist usage statistics: {}", err);
+            }
+        }
+    }
+
     /// Deletes or renames the current chat conversation based on configuration
     /// If preserve_chats is true, the chat is renamed rather than deleted
     pub async fn clean_chat(&self) -> Result<(), ClewdrError> {
@@ -146,10 +190,13 @@ impl ClaudeWebState {
         let Some(ref conv_uuid) = self.conv_uuid else {
             return Ok(());
         };
-        let endpoint = format!(
-            "{}/api/organizations/{}/chat_conversations/{}",
-            self.endpoint, org_uuid, conv_uuid
-        );
+        let endpoint = self
+            .endpoint
+            .join(&format!(
+                "api/organizations/{}/chat_conversations/{}",
+                org_uuid, conv_uuid
+            ))
+            .expect("Url parse error");
         debug!("Deleting chat: {}", conv_uuid);
         let _ = self
             .build_request(Method::DELETE, endpoint)

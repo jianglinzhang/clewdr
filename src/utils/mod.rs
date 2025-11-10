@@ -1,6 +1,6 @@
 use axum::body::Body;
 use colored::{ColoredString, Colorize};
-use tokio::{io::AsyncWriteExt, spawn};
+use tokio::spawn;
 use tracing::error;
 
 use crate::{
@@ -39,20 +39,16 @@ pub fn print_out_text(text: String, file_name: &str) {
     if CLEWDR_CONFIG.load().no_fs {
         return;
     }
-    let file_name = LOG_DIR.join(file_name);
+    let path = LOG_DIR.join(file_name);
     spawn(async move {
-        let Ok(mut file) = tokio::fs::File::options()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&file_name)
-            .await
-        else {
-            error!("Failed to open file: {}", file_name.display());
+        if let Some(dir) = path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(dir).await
+        {
+            error!("Failed to create log directory {}: {}", dir.display(), e);
             return;
-        };
-        if let Err(e) = file.write_all(text.as_bytes()).await {
-            error!("Failed to write to file: {}\n", e);
+        }
+        if let Err(e) = tokio::fs::write(&path, text).await {
+            error!("Failed to write log file {}: {}", path.display(), e);
         }
     });
 }

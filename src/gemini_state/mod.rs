@@ -75,6 +75,7 @@ pub struct GeminiState {
     pub key_handle: KeyActorHandle,
     pub api_format: GeminiApiFormat,
     pub client: Client,
+    pub vertex_credential: Option<ServiceAccountKey>,
 }
 
 impl GeminiState {
@@ -90,6 +91,7 @@ impl GeminiState {
             key_handle: tx,
             api_format: GeminiApiFormat::Gemini,
             client: DUMMY_CLIENT.to_owned(),
+            vertex_credential: None,
         }
     }
 
@@ -104,12 +106,10 @@ impl GeminiState {
     pub async fn request_key(&mut self) -> Result<(), ClewdrError> {
         let key = self.key_handle.request().await?;
         self.key = Some(key.to_owned());
-        let client = ClientBuilder::new();
-        let client = if let Some(proxy) = CLEWDR_CONFIG.load().proxy.to_owned() {
-            client.proxy(proxy)
-        } else {
-            client
-        };
+        let mut client = ClientBuilder::new();
+        if let Some(proxy) = CLEWDR_CONFIG.load().wreq_proxy.to_owned() {
+            client = client.proxy(proxy);
+        }
         self.client = client.build().context(WreqSnafu {
             msg: "Failed to build Gemini client",
         })?;
@@ -129,12 +129,10 @@ impl GeminiState {
         &mut self,
         p: impl Sized + Serialize,
     ) -> Result<wreq::Response, ClewdrError> {
-        let client = ClientBuilder::new();
-        let client = if let Some(proxy) = CLEWDR_CONFIG.load().proxy.to_owned() {
-            client.proxy(proxy)
-        } else {
-            client
-        };
+        let mut client = ClientBuilder::new();
+        if let Some(proxy) = CLEWDR_CONFIG.load().wreq_proxy.to_owned() {
+            client = client.proxy(proxy);
+        }
         self.client = client.build().context(WreqSnafu {
             msg: "Failed to build Gemini client",
         })?;
@@ -145,7 +143,14 @@ impl GeminiState {
         };
 
         // Get an access token
-        let Some(cred) = CLEWDR_CONFIG.load().vertex.credential.to_owned() else {
+        let Some(cred) = self.vertex_credential.to_owned().or_else(|| {
+            CLEWDR_CONFIG
+                .load()
+                .vertex
+                .credential_list()
+                .into_iter()
+                .next()
+        }) else {
             return Err(ClewdrError::BadRequest {
                 msg: "Vertex credential not found",
             });
@@ -213,7 +218,7 @@ impl GeminiState {
                 let mut query_vec = self.query.to_vec();
                 query_vec.push(("key", key.as_str()));
                 self.client
-                    .post(format!("{}/v1beta/{}", GEMINI_ENDPOINT, self.path))
+                    .post(format!("{}v1beta/{}", GEMINI_ENDPOINT, self.path))
                     .query(&query_vec)
                     .json(&p)
                     .send()
@@ -224,7 +229,7 @@ impl GeminiState {
             }
             GeminiApiFormat::OpenAI => self
                 .client
-                .post(format!("{GEMINI_ENDPOINT}/v1beta/openai/chat/completions",))
+                .post(format!("{GEMINI_ENDPOINT}v1beta/openai/chat/completions",))
                 .header(AUTHORIZATION, format!("Bearer {key}"))
                 .json(&p)
                 .send()

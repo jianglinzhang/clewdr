@@ -1,7 +1,8 @@
 use clewdr::{
-    self, FIG, IS_DEBUG, VERSION_INFO,
+    self, FIG, IS_DEBUG,
     config::{CLEWDR_CONFIG, CONFIG_PATH, LOG_DIR},
     error::ClewdrError,
+    version_info_colored,
 };
 use colored::Colorize;
 #[cfg(feature = "mimalloc")]
@@ -49,6 +50,12 @@ where
 /// Result indicating success or failure of the application execution
 #[tokio::main]
 async fn main() -> Result<(), ClewdrError> {
+    // Ensure aws-lc crypto provider is installed before rustls usage (yup-oauth2 / hyper-rustls)
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("failed to install aws-lc crypto provider");
+
+    // DB drivers setup is handled by SeaORM (via sqlx features) when compiled with db-*
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
     #[cfg(windows)]
@@ -92,7 +99,7 @@ async fn main() -> Result<(), ClewdrError> {
         None
     };
 
-    println!("{}\n{}", FIG, *VERSION_INFO);
+    println!("{}\n{}", FIG, version_info_colored());
 
     #[cfg(feature = "portable")]
     {
@@ -101,6 +108,11 @@ async fn main() -> Result<(), ClewdrError> {
         if let Err(e) = updater.check_for_updates().await {
             warn!("Update check failed: {}", e);
         }
+    }
+
+    if let Err(e) = clewdr::persistence::storage().spawn_bootstrap().await {
+        use tracing::warn;
+        warn!("DB bootstrap skipped or failed: {}", e);
     }
 
     // print info
